@@ -5,6 +5,26 @@ from sqlalchemy.orm import Session
 from dotenv import load_dotenv, find_dotenv
 import os
 
+# ============= PROMETHEUS METRICS =============
+from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+from fastapi.responses import Response
+import time
+
+# Contadores
+http_requests_total = Counter(
+    'http_requests_total',
+    'Total de requests HTTP',
+    ['method', 'endpoint', 'status']
+)
+
+# Histograma de duración
+http_request_duration_seconds = Histogram(
+    'http_request_duration_seconds',
+    'Duración de requests HTTP en segundos',
+    ['method', 'endpoint']
+)
+# ============================================
+
 from app.api import agent as agent_routes
 from app.api import integrations as integrations_routes
 from app.repo.db import get_db
@@ -19,6 +39,25 @@ load_dotenv(find_dotenv())
 # App & Swagger (con Bearer)
 # -----------------------------
 app = FastAPI(title="GameMatch+ API (MySQL)", version="0.2.0")
+
+# Middleware para capturar métricas de Prometheus
+@app.middleware("http")
+async def prometheus_middleware(request, call_next):
+    start_time = time.time()
+    response = None
+    try:
+        response = await call_next(request)
+        return response
+    finally:
+        duration = time.time() - start_time
+        method = request.method
+        # Usar plantilla de ruta para evitar alta cardinalidad
+        route = request.scope.get("route")
+        endpoint = getattr(route, "path", None) or request.url.path
+        status_code = str(response.status_code) if response is not None else "500"
+
+        http_requests_total.labels(method=method, endpoint=endpoint, status=status_code).inc()
+        http_request_duration_seconds.labels(method=method, endpoint=endpoint).observe(duration)
 
 # Routers
 app.include_router(agent_routes.router, tags=["agent"])
@@ -120,7 +159,7 @@ def feedback(user_id: int, fb: schemas.FeedbackIn, db: Session = Depends(get_db)
     return {"ok": True}
 
 # -----------------------------
-# METRICS
+# METRICS DE USUARIO (tu endpoint previo)
 # -----------------------------
 @app.get("/users/{user_id}/metrics")
 def metrics(user_id: int, db: Session = Depends(get_db)):
@@ -148,3 +187,10 @@ def recommendations(
         }
         for prob, g in scored
     ]
+
+# ============= PROMETHEUS ENDPOINT =============
+@app.get("/metrics")
+def prometheus_metrics():
+    """Endpoint para que Prometheus recolecte métrricas"""
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+# ==============================================
