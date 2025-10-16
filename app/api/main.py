@@ -9,6 +9,7 @@ import os
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 from fastapi.responses import Response
 import time
+import httpx
 
 # Contadores
 http_requests_total = Counter(
@@ -194,3 +195,29 @@ def prometheus_metrics():
     """Endpoint para que Prometheus recolecte métrricas"""
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 # ==============================================
+
+# ============= MICROSERVICIO: SENTIMENT ANALYSIS =============
+import httpx
+
+@app.post("/feedback/analyze-sentiment")
+async def analyze_feedback_sentiment(feedback_text: str):
+    """
+    Endpoint que llama al microservicio de análisis de sentimientos.
+    Ejemplo de comunicación entre microservicios.
+    """
+    try:
+        # Llamar al microservicio en puerto 8001
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "http://localhost:8001/analyze",
+                json={"text": feedback_text},
+                timeout=5.0
+            )
+            response.raise_for_status()
+            return response.json()
+    except httpx.HTTPError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Microservicio no disponible: {str(e)}"
+        )
+# ============================================================

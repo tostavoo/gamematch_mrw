@@ -85,7 +85,10 @@ button[kind="secondary"] {border-radius:12px !important;}
 st.sidebar.title("GameMatch+ 🎮")
 st.sidebar.caption("FastAPI + MySQL + Streamlit")
 
-page = st.sidebar.radio("Navegación", ["Inicio", "Registro / Login", "Catálogo", "Recomendaciones", "Feedback", "Métricas", "Admin"], index=0)
+menu = st.sidebar.radio(
+    "Navegación",
+    ["Inicio", "Registro / Login", "Catálogo", "Recomendaciones", "Feedback", "Métricas", "Admin", "Análisis de Sentimientos"],
+index=0)
 st.sidebar.markdown("---")
 if st.session_state.token:
     st.sidebar.success(f"Sesión: {st.session_state.email or 'usuario'} (id={st.session_state.user_id})")
@@ -113,7 +116,7 @@ def header(title:str, subtitle:str=""):
         """, unsafe_allow_html=True)
 
 # -------- Páginas --------
-if page == "Inicio":
+if menu == "Inicio":
     header("GameMatch+", "Recomendaciones + agente ε-greedy con feedback en tiempo real")
     col1, col2, col3 = st.columns([1.6,1,1])
     with col1:
@@ -126,7 +129,7 @@ if page == "Inicio":
     with col3:
         st.info("Consejo: usa *Admin → Seed* para poblar juegos rápido.")
 
-elif page == "Registro / Login":
+elif menu == "Registro / Login":
     header("Registro / Login")
     t1, t2 = st.tabs(["Registrarme", "Iniciar sesión"])
 
@@ -169,7 +172,7 @@ elif page == "Registro / Login":
             except requests.HTTPError as e:
                 st.error(e.response.text if e.response is not None else str(e))
 
-elif page == "Catálogo":
+elif menu == "Catálogo":
     guard_logged(); header("Catálogo", "Crea y explora tu colección")
     refresh_games_cache()
 
@@ -222,7 +225,7 @@ elif page == "Catálogo":
                 except requests.HTTPError as e:
                     st.error(e.response.text if e.response is not None else str(e))
 
-elif page == "Recomendaciones":
+elif menu == "Recomendaciones":
     guard_logged(); header("Recomendaciones", "Mezcla de explotación + exploración (ε-greedy)")
 
     # ε actual
@@ -300,7 +303,7 @@ elif page == "Recomendaciones":
                     with c3: st.caption("Dale feedback para afinar el agente.")
                     st.markdown('</div>', unsafe_allow_html=True)
 
-elif page == "Feedback":
+elif menu == "Feedback":
     guard_logged(); header("Feedback", "Registra tus gustos; el agente aprende")
     refresh_games_cache()
     if not st.session_state.games_cache:
@@ -318,7 +321,7 @@ elif page == "Feedback":
             except requests.HTTPError as e:
                 st.error(e.response.text if e.response is not None else str(e))
 
-elif page == "Métricas":
+elif menu == "Métricas":
     guard_logged(); header("Tus métricas", "Resumen de tu actividad")
     try:
         m = api_get(f"/users/{st.session_state.user_id}/metrics")
@@ -330,7 +333,7 @@ elif page == "Métricas":
     except requests.HTTPError as e:
         st.error(e.response.text if e.response is not None else str(e))
 
-elif page == "Admin":
+elif menu == "Admin":
     header("Admin / Demo", "Herramientas para pruebas")
 
     c1, c2 = st.columns(2)
@@ -387,3 +390,223 @@ elif page == "Admin":
                     st.toast("Steam sync OK", icon="🎮")
                 except requests.HTTPError as e:
                     st.error(e.response.text if e.response is not None else str(e))
+
+
+# ============= ANÁLISIS DE SENTIMIENTOS (MICROSERVICIO) =============
+elif menu == "Análisis de Sentimientos":
+    st.title("🧠 Análisis de Sentimientos")
+    st.markdown("### Microservicio de NLP")
+    
+    st.info("""
+    **¿Qué hace este microservicio?**
+    
+    Analiza el tono emocional de textos usando **Procesamiento de Lenguaje Natural (NLP)** 
+    con la librería TextBlob. Clasifica el sentimiento como:
+    - 😊 **Positivo** (score > 0.1)
+    - 😐 **Neutral** (score entre -0.1 y 0.1)
+    - 😞 **Negativo** (score < -0.1)
+    
+    Este servicio corre **independientemente** en el puerto 8001 y se comunica 
+    con el backend principal mediante API REST.
+    """)
+    
+    st.divider()
+    
+    # Input del usuario
+    st.subheader("📝 Prueba el analizador")
+    
+    # Ejemplos predefinidos
+    ejemplos = {
+        "Selecciona un ejemplo...": "",
+        "😊 Positivo": "Este juego es increíble, me encanta mucho! La jugabilidad es excelente.",
+        "😞 Negativo": "Este juego es horrible, no me gustó para nada. Muy decepcionante.",
+        "😐 Neutral": "Es un juego normal, nada especial.",
+        "🎮 Feedback real": "La mecánica del juego está bien pero los gráficos podrían mejorar."
+    }
+    
+    ejemplo_seleccionado = st.selectbox("O selecciona un ejemplo:", list(ejemplos.keys()))
+    
+    # Text area
+    texto_default = ejemplos[ejemplo_seleccionado] if ejemplo_seleccionado != "Selecciona un ejemplo..." else ""
+    user_text = st.text_area(
+        "Escribe tu texto aquí:",
+        value=texto_default,
+        height=100,
+        placeholder="Ejemplo: Me encantó este juego, es fantástico!"
+    )
+    
+    col1, col2, col3 = st.columns([1, 1, 2])
+    
+    with col1:
+        analizar_btn = st.button("🔍 Analizar", type="primary", use_container_width=True)
+    
+    with col2:
+        limpiar_btn = st.button("🗑️ Limpiar", use_container_width=True)
+    
+    if limpiar_btn:
+        st.rerun()
+    
+    if analizar_btn and user_text.strip():
+        with st.spinner("Analizando sentimiento..."):
+            try:
+                # Llamar al backend que a su vez llama al microservicio
+                response = requests.post(
+                f"{BACKEND_URL}/feedback/analyze-sentiment",  # ← CORRECTO
+                params={"feedback_text": user_text}
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    
+                    if result.get("success"):
+                        data = result.get("data", {})
+                        sentiment = data.get("sentiment", "neutral")
+                        score = data.get("score", 0)
+                        confidence = data.get("confidence", 0)
+                        text_length = data.get("text_length", 0)
+                        
+                        st.divider()
+                        st.subheader("📊 Resultado del Análisis")
+                        
+                        # Emoji según sentimiento
+                        emoji_map = {
+                            "positive": "😊",
+                            "negative": "😞",
+                            "neutral": "😐"
+                        }
+                        
+                        # Color según sentimiento
+                        color_map = {
+                            "positive": "green",
+                            "negative": "red",
+                            "neutral": "gray"
+                        }
+                        
+                        emoji = emoji_map.get(sentiment, "😐")
+                        color = color_map.get(sentiment, "gray")
+                        
+                        # Mostrar resultado principal
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            st.metric(
+                                label="Sentimiento",
+                                value=f"{emoji} {sentiment.upper()}"
+                            )
+                        
+                        with col2:
+                            st.metric(
+                                label="Score",
+                                value=f"{score:.3f}",
+                                delta=None
+                            )
+                        
+                        with col3:
+                            st.metric(
+                                label="Confianza",
+                                value=f"{confidence:.1%}"
+                            )
+                        
+                        # Barra de progreso visual
+                        st.markdown("#### Escala de Sentimiento")
+                        
+                        # Normalizar score de -1..1 a 0..1
+                        normalized_score = (score + 1) / 2
+                        
+                        # Crear barra de progreso con color
+                        progress_html = f"""
+                        <div style="background: linear-gradient(to right, #ff4444, #ffaa00, #44ff44); 
+                                    height: 30px; 
+                                    border-radius: 15px; 
+                                    position: relative;
+                                    margin: 10px 0;">
+                            <div style="position: absolute; 
+                                        left: {normalized_score * 100}%; 
+                                        top: -5px; 
+                                        width: 40px; 
+                                        height: 40px; 
+                                        background: white; 
+                                        border: 3px solid {color}; 
+                                        border-radius: 50%;
+                                        transform: translateX(-50%);
+                                        display: flex;
+                                        align-items: center;
+                                        justify-content: center;
+                                        font-size: 20px;">
+                                {emoji}
+                            </div>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; font-size: 12px; color: gray;">
+                            <span>Muy Negativo</span>
+                            <span>Neutral</span>
+                            <span>Muy Positivo</span>
+                        </div>
+                        """
+                        st.markdown(progress_html, unsafe_allow_html=True)
+                        
+                        # Información adicional
+                        st.divider()
+                        st.markdown("#### 📋 Detalles Técnicos")
+                        
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.markdown(f"""
+                            - **Texto analizado:** {text_length} caracteres
+                            - **Modelo:** TextBlob NLP
+                            - **Microservicio:** Puerto 8001
+                            """)
+                        
+                        with col2:
+                            st.markdown(f"""
+                            - **Score range:** -1.0 (negativo) a +1.0 (positivo)
+                            - **Umbral neutral:** -0.1 a 0.1
+                            - **Comunicación:** API REST (HTTP)
+                            """)
+                        
+                        # Mostrar JSON raw
+                        with st.expander("🔍 Ver respuesta JSON completa"):
+                            st.json(result)
+                        
+                        st.success("✅ Análisis completado exitosamente")
+                    
+                    else:
+                        st.error("❌ Error en el análisis del sentimiento")
+                
+                elif response.status_code == 503:
+                    st.error("⚠️ El microservicio no está disponible. Asegúrate de que esté corriendo en el puerto 8001.")
+                    st.code("uvicorn app.main:app --port 8001", language="bash")
+                
+                else:
+                    st.error(f"❌ Error {response.status_code}: {response.text}")
+            
+            except requests.exceptions.ConnectionError:
+                st.error("⚠️ No se pudo conectar con el backend. Verifica que esté corriendo.")
+            except Exception as e:
+                st.error(f"❌ Error: {str(e)}")
+    
+    elif analizar_btn and not user_text.strip():
+        st.warning("⚠️ Por favor escribe un texto para analizar")
+    
+    # Información del microservicio
+    st.divider()
+    st.markdown("### 🏗️ Arquitectura del Microservicio")
+    
+    st.code("""
+    Usuario (Streamlit :8501)
+         ↓ HTTP Request
+    Backend Principal (:8000)
+         ↓ Async HTTP Request
+    Sentiment Service (:8001)
+         ↓ NLP Analysis (TextBlob)
+    Respuesta con sentiment
+    """, language="text")
+    
+    st.info("""
+    **Ventajas de esta arquitectura:**
+    - ✅ Escalabilidad independiente
+    - ✅ Mantenibilidad mejorada
+    - ✅ Despliegue independiente
+    - ✅ Resiliencia (si un servicio falla, los demás siguen)
+    """)
+# ====================================================================
