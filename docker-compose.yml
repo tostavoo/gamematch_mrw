@@ -1,0 +1,62 @@
+services:
+  # Base de datos MySQL
+  mysql:
+    image: mysql:8.0
+    container_name: gamematch_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: gamematch
+      MYSQL_USER: gamematch_user
+      MYSQL_PASSWORD: gamematch123
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./gamematch.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend FastAPI
+  backend:
+    build: .
+    container_name: gamematch_backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DB_USER=gamematch_user
+      - DB_PASS=gamematch123
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_NAME=gamematch
+      - JWT_SECRET=your_secret_key_here
+      - JWT_ALG=HS256
+      - ACCESS_TOKEN_EXPIRE_MINUTES=60
+      - RAWG_API_KEY=${RAWG_API_KEY}
+      - STEAM_API_KEY=${STEAM_API_KEY}
+      - PYTHONPATH=/app
+    depends_on:
+      mysql:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    # Sin 'command': usa el CMD del Dockerfile -> uvicorn app.api.main:app ...
+
+  # Frontend Streamlit
+  frontend:
+    build: .
+    container_name: gamematch_frontend
+    ports:
+      - "8501:8501"
+    environment:
+      - BACKEND_URL=http://backend:8000
+    depends_on:
+      - backend
+    volumes:
+      - ./ui:/app/ui
+    command: streamlit run ui/app.py --server.address=0.0.0.0
+
+volumes:
+  mysql_data:
